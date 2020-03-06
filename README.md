@@ -42,7 +42,7 @@ To configure device, enter JSON formated configuration the Name, IP Address and 
 
     [
         {"Name" : "Lamp 1", "IP Address" : "192.168.0.1", "Token": "aabbcc"},
-        {"Name" : "Lamp 2", "IP Address" : "192.168.0.2", "Token": "aabbcc"},
+        {"Name" : "Lamp 2", "IP Address" : "192.168.0.2", "Token": "aabbcc"}
     ]
 
 
