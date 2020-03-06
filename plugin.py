@@ -1,28 +1,25 @@
 #
 #           Philips LED Lamp python Plugin for Domoticz
-#           Version 0.1.2
+#           Version 0.1.3
 
 #           Powered by lib python miio https://github.com/rytilahti/python-miio
 #
+#           This is forked version by mazycz from Whilser
+#           In this version are removed scenes and implemented multiple lamps using JSON configuration
+#
+
 
 """
-<plugin key="PhilipsLED" name="Xiaomi MiJia Philips LED Lamp" author="Whilser" version="0.1.2" wikilink="https://www.domoticz.com/wiki/Xiaomi_MiJia_Philips_LED_Lamp" externallink="https://github.com/Whilser/Xiaomi-MiJia-Philips-LED-Lamp">
+<plugin key="PhilipsLED" name="Xiaomi MiJia Philips LED Lamp" author="mazy.cz" originalauthor="Whilser" version="0.1.3" wikilink="https://www.domoticz.com/wiki/Xiaomi_MiJia_Philips_LED_Lamp" externallink="https://github.com/mazycz/Xiaomi-MiJia-Philips-LED-Lamp">
     <description>
         <h2>Xiaomi MiJia Philips LED Lamp</h2><br/>
         <h3>Configuration</h3>
-        Enter the IP Address and Token of your Philips Lamp. The Scene parameter creates a selector of the standard Philips lamp scenes.  <br/>
-        Set the scene parameter "show" to display scenes, otherwise set to "hide".
-
+        Enter Name, the IP Address and Token of your Philips Lamp. Enter data in JSON Format<br/>
+        <br/><br/>
+        JSON Data format example: [{'Name' : 'Lamp 1', 'IP Address' : '192.168.0.1', 'Token': 'aabbcc'},{'Name' : 'Lamp 2', 'IP Address' : '192.168.0.2', 'Token': 'aabbcc'}]
     </description>
     <params>
-        <param field="Address" label="IP Address" width="200px" required="true" default=""/>
-        <param field="Mode1" label="Token" width="300px" required="true" default=""/>
-        <param field="Mode3" label="Scenes" width="75px">
-            <options>
-                <option label="Show" value="Show" default="True" />
-                <option label="Hide" value="Hide" />
-            </options>
-        </param>
+        <param field="Address" label="JSON Data" width="500px" required="true" default=""/>
         <param field="Mode2" label="Debug" width="75px">
             <options>
                 <option label="True" value="Debug"/>
@@ -52,8 +49,8 @@ from miio.philips_bulb import PhilipsBulbStatus, PhilipsBulbException
 
 class BasePlugin:
 
-    UNIT_LAMP = 1
-    UNIT_SCENES = 2
+    UNITS = []
+    LAMPS = []
 
     pollTime = 1
     nextTimeSync = 0
@@ -64,18 +61,14 @@ class BasePlugin:
         return
 
     def onStart(self):
-        Domoticz.Debug("onStart called")
-        if Parameters['Mode2'] == 'Debug': Domoticz.Debugging(1)
-
-        if self.UNIT_LAMP not in Devices:
-            Domoticz.Device(Name='Lamp',  Unit=self.UNIT_LAMP, Type=241, Subtype=8, Switchtype=7, Used=1).Create()
-
-        if ((Parameters['Mode3'] == 'Show') and (self.UNIT_SCENES not in Devices)):
-            Options = { "Scenes": "|||||", "LevelNames": "Off|Bright|TV|Warm|Midnight", "LevelOffHidden": "true", "SelectorStyle": "0" }
-            Domoticz.Device(Name="Scenes", Unit=self.UNIT_SCENES, Type=244, Subtype=62 , Switchtype=18, Options = Options, Used=1).Create()
-
-        global Lamp
-        Lamp = PhilipsBulb(Parameters['Address'],Parameters['Mode1'])
+        Domoticz.Log("onStart called")
+        jsObj = json.loads(Parameters["Address"])
+        for i in range(len(jsObj)):
+            self.UNITS.append(jsObj[i])
+            if i+1 not in Devices:
+                Domoticz.Log(f'Not in Philips - {self.UNITS[i]["Name"]}')
+                Domoticz.Device(Name=self.UNITS[i]["Name"],  Unit=i+1, Type=241, Subtype=8, Switchtype=7, Used=1).Create()
+            self.LAMPS.append(PhilipsBulb(self.UNITS[i]["IP Address"], self.UNITS[i]["Token"]))
 
         self.pollTime = random.randrange(5, 16)
         self.nextTimeSync = 0
@@ -96,40 +89,36 @@ class BasePlugin:
         Domoticz.Debug("onMessage called")
 
     def onCommand(self, Unit, Command, Level, Color):
-        Domoticz.Debug("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command) + "', Level: " + str(Level)+ ", Color: "+str(Color))
-
-        if Unit == self.UNIT_SCENES:
-            self.HandleScenes(Level)
-            return
-
+        #Domoticz.Log("onCommand called for Unit " + str(Unit) + ": Parameter '" + str(Command) + "', Level: " + str(Level)+ ", Color: "+str(Color))
         Level = max(min(Level, 100), 1)
 
         try:
-
             if Command == 'On':
-                Lamp.on()
+                Domoticz.Log(f"On {Unit -1}")
+                self.LAMPS[Unit - 1].on()
                 Devices[Unit].Update(nValue=1, sValue='On', TimedOut = False)
 
             elif Command == 'Off':
-                Lamp.off()
+                Domoticz.Log(f"Off {Unit -1}")
+                self.LAMPS[Unit - 1].off()
                 Devices[Unit].Update(nValue=0, sValue='Off', TimedOut = False)
-                if self.UNIT_SCENES in Devices: Devices[self.UNIT_SCENES].Update(nValue=0, sValue='0')
 
             elif Command == 'Set Level':
-                Lamp.set_brightness(Level)
+                Domoticz.Log(f"SetLevel {Unit -1} level: {Level}")
+                self.LAMPS[Unit - 1].set_brightness(Level)
                 Devices[Unit].Update(nValue=1, sValue=str(Level), TimedOut = False)
 
             elif Command == 'Set Color':
-
+                Domoticz.Log(f"SetColor {Unit -1} level: {Color}")
                 Hue = json.loads(Color)
                 if Hue['m'] == 2:
                     Temp = 100-((100*Hue['t'])/255)
                     Temp = max(min(Temp, 100), 1)
 
-                    Lamp.set_brightness_and_color_temperature(Level, Temp)
+                    self.LAMPS[Unit - 1].set_brightness_and_color_temperature(Level, Temp)
                     Devices[Unit].Update(nValue=1, sValue=str(Level), Color = Color, TimedOut = False)
         except Exception as e:
-            Domoticz.Error('Error send command to {0} with IP {1}. Lamp is not responding, check power/network connection. Errror: {2}'.format(Parameters['Name'], Parameters['Address'], e.__class__))
+            Domoticz.Error('Error send command to {0} with IP {1}. Lamp is not responding, check power/network connection. Errror: {2}'.format(Unit, self.UNITS[Unit - 1], e.__class__))
             Devices[Unit].Update(nValue=Devices[Unit].nValue, sValue=Devices[Unit].sValue, TimedOut = True)
             self.handshakeTime = 0
             self.nextTimeSync = 0
@@ -141,68 +130,46 @@ class BasePlugin:
         Domoticz.Debug("onDisconnect called")
 
     def onHeartbeat(self):
-        Domoticz.Debug("onHeartbeat called")
-
         self.nextTimeSync -= 1
         self.handshakeTime -= 1
 
         try:
+            for i in range(len(self.UNITS)):
+                if self.handshakeTime <= 0:
+                    self.LAMPS[i].do_discover()
+                    self.handshakeTime = 3
 
-            if self.handshakeTime <= 0:
-                Lamp.do_discover()
-                Domoticz.Debug('Device ID: {0} '.format(binascii.hexlify(Lamp._device_id).decode()))
-                self.handshakeTime = 3
+                if (self.nextTimeSync <= 0) and (i+1 in Devices):
+                    Domoticz.Debug('Sync on time: every {0} minute called'.format(self.pollTime))
+                    self.nextTimeSync = int((self.pollTime*60)/20)
 
-            if (self.nextTimeSync <= 0) and (self.UNIT_LAMP in Devices):
-                Domoticz.Debug('Sync on time: every {0} minute called'.format(self.pollTime))
-                self.nextTimeSync = int((self.pollTime*60)/20)
+                    status = self.LAMPS[i].status()
 
-                status = Lamp.status()
+                    if status.is_on:
+                        hue = int((100 - int(status.color_temperature)) * 255 / 100)
+                        if hue == 0: hue = 1
 
-                if status.is_on:
-                    hue = int((100 - int(status.color_temperature)) * 255 / 100)
-                    if hue == 0: hue = 1
+                        color = {}
+                        color['m']  = 2
+                        color['t']  = hue
+                        color['r']  = 0
+                        color['g']  = 0
+                        color['b']  = 0
+                        color['cw'] = 0
+                        color['ww'] = 0
+                        sColor = json.dumps(color)
 
-                    color = {}
-                    color['m']  = 2
-                    color['t']  = hue
-                    color['r']  = 0
-                    color['g']  = 0
-                    color['b']  = 0
-                    color['cw'] = 0
-                    color['ww'] = 0
-                    sColor = json.dumps(color)
+                        # if ((Devices[self.UNITS[i]].sValue != str(status.brightness)) or (Devices[self.UNITS[i]].nValue != 1) or (Devices[self.UNITS[i]].TimedOut == True)):
+                        #     Devices[self.UNITS[i]].Update(nValue=1, sValue=str(status.brightness), Color = sColor, TimedOut = False)
 
-                    if ((Devices[self.UNIT_LAMP].sValue != str(status.brightness)) or (Devices[self.UNIT_LAMP].nValue != 1) or (Devices[self.UNIT_LAMP].TimedOut == True)):
-                        Devices[self.UNIT_LAMP].Update(nValue=1, sValue=str(status.brightness), Color = sColor, TimedOut = False)
-
-                if not status.is_on:
-                    if ((Devices[self.UNIT_LAMP].nValue != 0) or (Devices[self.UNIT_LAMP].TimedOut == True)):
-                        Devices[self.UNIT_LAMP].Update(nValue=0, sValue='Off', TimedOut = False)
-
-                if ((self.UNIT_SCENES in Devices) and (str(status.scene*10) != Devices[self.UNIT_SCENES].sValue)):
-                    if status.scene == 0:
-                        Devices[self.UNIT_SCENES].Update(nValue=0, sValue="0")
-                    else: Devices[self.UNIT_SCENES].Update(nValue=1, sValue=str(status.scene*10))
+                    if not status.is_on:
+                        if ((Devices[i+1].nValue != 0) or (Devices[i+1].TimedOut == True)):
+                            Devices[i+1].Update(nValue=0, sValue='Off', TimedOut = False)
 
         except Exception as e:
-            Devices[self.UNIT_LAMP].Update(nValue=Devices[self.UNIT_LAMP].nValue, sValue=Devices[self.UNIT_LAMP].sValue, TimedOut = True)
+            #Devices[self.UNITS].Update(nValue=Devices[self.UNITS].nValue, sValue=Devices[self.UNITS].sValue, TimedOut = True)
             self.handshakeTime = 0
             self.nextTimeSync = 0
-
-    def HandleScenes(self, Level):
-        if (Level == 0): return
-
-        try:
-            Lamp.set_scene(int(Level)/10)
-
-            if self.UNIT_SCENES in Devices:
-                Devices[self.UNIT_SCENES].Update(nValue=1, sValue=str(Level))
-                self.nextTimeSync = 0
-
-        except:
-            Domoticz.Error('Error set fixed scene on {0} with IP {1}. Check power/network connection.'.format(Parameters['Name'], Parameters['Address']))
-            self.handshakeTime = 0
 
 global _plugin
 _plugin = BasePlugin()
